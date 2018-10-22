@@ -3,33 +3,42 @@ package main
 import (
 	"context"
 	"flag"
-	"log"
 	"net"
+	"sync"
 
 	"github.com/vharitonsky/iniflags"
 )
 
 var (
-	addr       = flag.String("addr", ":8080", "Address to listen with SOCKS5")
-	serverAddr = flag.String("server", "", "The address of the remote server")
-	sshUser    = flag.String("ssh-user", "lantern", "SSH user on the remote server")
-	sshKeyFile = flag.String("ssh-key-file", "", "SSH key file to authenticate on the remote server")
+	socks5Port = flag.String("socks5-port", "8080", "The port on which the local SOCKS5 server is listen.")
+	remotePort = flag.String("remote-port", "", "The port to access on the remote servers. Leave it empty to allow the remote port being passed as SOCKS5 user name on a per-request basis.")
+	sshUser    = flag.String("ssh-user", "", "User name on the remote servers.")
+	sshKeyFile = flag.String("ssh-key-file", "", "The path of the private key file to authenticate the user on the remote servers.")
 )
 
 func main() {
-	iniflags.Parse()
-	s, err := NewRemoteServer(*serverAddr, *sshUser, *sshKeyFile)
-	if err != nil {
-		log.Fatal(err)
-	}
-	tunnel(*addr, s)
-}
+	var mx sync.Mutex
+	remoteServers := make(map[string]*remoteServer)
 
-func tunnel(listenAdddr string, remoteServer *Server) error {
+	iniflags.Parse()
 	s := socks{
-		Dial: func(ctx context.Context, net, addr string) (net.Conn, error) {
-			return remoteServer.ForwardTo(addr)
+		Dial: func(ctx context.Context, network, addr string) (conn net.Conn, err error) {
+			mx.Lock()
+			s, exists := remoteServers[addr]
+			if !exists {
+				s, err = NewRemoteServer(addr, *sshUser, *sshKeyFile)
+				if err != nil {
+					mx.Unlock()
+					return
+				}
+				remoteServers[addr] = s
+			}
+			mx.Unlock()
+			// Passed as username in SOCKS5 request
+			remotePort := ctx.Value(ctxKeyRemotePort).(string)
+			return s.ForwardTo(net.JoinHostPort("127.0.0.1", remotePort))
 		},
+		remotePort: *remotePort,
 	}
-	return s.Serve(listenAdddr)
+	s.Serve(net.JoinHostPort("127.0.0.1", *socks5Port))
 }

@@ -2,27 +2,23 @@ package main
 
 import (
 	"io/ioutil"
+	"log"
 	"net"
-	"time"
+	"sync/atomic"
 
 	"golang.org/x/crypto/ssh"
 )
 
-type Tunnel struct {
-	sshConfig   *ssh.ClientConfig
-	idleTimeout time.Duration
-}
-
-type Server struct {
+type remoteServer struct {
 	config *ssh.ClientConfig
 	addr   string
-	client *ssh.Client
+	client atomic.Value // *ssh.Client
 }
 
 func NewRemoteServer(
 	addr string,
 	user string,
-	keyFile string) (*Server, error) {
+	keyFile string) (*remoteServer, error) {
 	key, err := ioutil.ReadFile(keyFile)
 	if err != nil {
 		return nil, err
@@ -38,20 +34,37 @@ func NewRemoteServer(
 		},
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 	}
-	return &Server{config, addr, nil}, nil
+	return &remoteServer{config: config, addr: addr}, nil
 }
 
-func (s *Server) ForwardTo(addr string) (net.Conn, error) {
-	if s.client == nil {
-		if client, err := ssh.Dial("tcp", s.addr, s.config); err != nil {
-			return nil, err
-		} else {
-			s.client = client
+func (s *remoteServer) ForwardTo(addr string) (conn net.Conn, err error) {
+	for i := 0; i < 2; i++ {
+		client := s.client.Load()
+		if client == nil {
+			if err = s.newSSH(); err != nil {
+				return
+			}
+			// try again using the newly created SSH connection
+			continue
 		}
+		conn, err = client.(*ssh.Client).Dial("tcp", addr)
+		if err != nil {
+			// Force creating a new SSH connection to retry, in case if the
+			// current one was broken or closed by the server.
+			s.client.Store(nil)
+			continue
+		}
+		return conn, nil
 	}
-	remoteConn, err := s.client.Dial("tcp", addr)
+	return nil, err
+}
+
+func (s *remoteServer) newSSH() (err error) {
+	log.Printf("Creating new SSH connection to %s", s.addr)
+	client, err := ssh.Dial("tcp", s.addr, s.config)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	return remoteConn, nil
+	s.client.Store(client)
+	return nil
 }
