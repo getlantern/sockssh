@@ -38,33 +38,23 @@ func NewRemoteServer(
 }
 
 func (s *remoteServer) ForwardTo(addr string) (conn net.Conn, err error) {
+	var redialSSH bool
 	for i := 0; i < 2; i++ {
 		client := s.client.Load()
-		if client == nil {
-			if err = s.newSSH(); err != nil {
+		if client == nil || redialSSH {
+			log.Printf("Creating new SSH connection to %s", s.addr)
+			client, err = ssh.Dial("tcp", s.addr, s.config)
+			if err != nil {
 				return
 			}
-			// try again using the newly created SSH connection
-			continue
+			s.client.Store(client)
 		}
 		conn, err = client.(*ssh.Client).Dial("tcp", addr)
 		if err != nil {
-			// Force creating a new SSH connection to retry, in case if the
-			// current one was broken or closed by the server.
-			s.client.Store(nil)
+			redialSSH = true
 			continue
 		}
 		return conn, nil
 	}
 	return nil, err
-}
-
-func (s *remoteServer) newSSH() (err error) {
-	log.Printf("Creating new SSH connection to %s", s.addr)
-	client, err := ssh.Dial("tcp", s.addr, s.config)
-	if err != nil {
-		return err
-	}
-	s.client.Store(client)
-	return nil
 }
