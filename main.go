@@ -5,6 +5,7 @@ import (
 	"flag"
 	"net"
 	"sync"
+	"time"
 
 	"github.com/vharitonsky/iniflags"
 )
@@ -14,6 +15,7 @@ var (
 	remotePort = flag.String("remote-port", "", "The port to access on the remote servers. Leave it empty to allow the remote port being passed as SOCKS5 user name on a per-request basis.")
 	sshUser    = flag.String("ssh-user", "", "User name on the remote servers.")
 	sshKeyFile = flag.String("ssh-key-file", "", "The path of the private key file to authenticate the user on the remote servers.")
+	idleClose  = flag.Duration("idle-close", 24*time.Hour, "The period of silence before closing the SSH connection to the remote server. It usually won't be hit unless we no longer care about the remote server.")
 )
 
 func main() {
@@ -36,7 +38,7 @@ func main() {
 			mx.Unlock()
 			// Passed as username in SOCKS5 request
 			remotePort := ctx.Value(ctxKeyRemotePort).(string)
-			return s.ForwardTo(net.JoinHostPort("127.0.0.1", remotePort))
+			return s.ForwardTo(net.JoinHostPort("127.0.0.1", remotePort), *idleClose)
 		},
 		remotePort: *remotePort,
 	}

@@ -5,14 +5,16 @@ import (
 	"log"
 	"net"
 	"sync/atomic"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 )
 
 type remoteServer struct {
-	config *ssh.ClientConfig
-	addr   string
-	client atomic.Value // *ssh.Client
+	config     *ssh.ClientConfig
+	addr       string
+	client     atomic.Value // *ssh.Client
+	closeTimer *time.Timer
 }
 
 func NewRemoteServer(
@@ -34,10 +36,16 @@ func NewRemoteServer(
 		},
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 	}
-	return &remoteServer{config: config, addr: addr}, nil
+	return &remoteServer{config: config, addr: addr, closeTimer: time.NewTimer(0)}, nil
 }
 
-func (s *remoteServer) ForwardTo(addr string) (conn net.Conn, err error) {
+func (s *remoteServer) ForwardTo(addr string, sshIdleClose time.Duration) (conn net.Conn, err error) {
+	if !s.closeTimer.Stop() {
+		// We do not drain the channel here to avoid race condition with the
+		// goroutine created below. This branch is very unlikely to be hit in
+		// reality though.
+	}
+	s.closeTimer.Reset(sshIdleClose)
 	var redialSSH bool
 	for i := 0; i < 2; i++ {
 		client := s.client.Load()
@@ -47,6 +55,10 @@ func (s *remoteServer) ForwardTo(addr string) (conn net.Conn, err error) {
 			if err != nil {
 				return
 			}
+			go func() {
+				_ = <-s.closeTimer.C
+				client.(*ssh.Client).Close()
+			}()
 			s.client.Store(client)
 		}
 		conn, err = client.(*ssh.Client).Dial("tcp", addr)
