@@ -57,6 +57,7 @@ func (s *remoteServer) ForwardTo(addr string, sshIdleClose time.Duration) (conn 
 			}
 			go func() {
 				_ = <-s.closeTimer.C
+				log.Printf("Closing SSH connection to %s", s.addr)
 				client.(*ssh.Client).Close()
 			}()
 			s.client.Store(client)

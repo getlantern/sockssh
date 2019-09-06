@@ -19,10 +19,7 @@ sockssh -socks5-port=8000 -ssh-user=ubuntu -ssh-key-file=/home/<user>/.ssh/id_rs
 curl -x socks5://localhost:8000 <remote-server>:22/debug/pprof/goroutine?debug=1
 ```
 
-# Known issues
-
-* It keeps the SSH connection open indefinitely, which may not be desired but shouldn't cause penalty on the remote serves.
-
+It closes the SSH connections idled for 24 hours, but you can change it via the `-idle-close` option.
 
 # License
 
